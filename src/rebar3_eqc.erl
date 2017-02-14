@@ -72,7 +72,9 @@ do_tests(State, EqcOpts, _Tests) ->
     Properties = proplists:get_value(properties, EqcOpts, AllProps),
     {Opts, _} = rebar_state:command_parsed_args(State),
 
-    Plain = proplists:get_value(plain, Opts),
+    Plain = determine_output_fun(proplists:get_value(eqc_output_fun, EqcOpts),
+                                 proplists:get_value(plain, Opts)),
+
     TestFun =
         case CounterExMode of
             true ->
@@ -88,6 +90,11 @@ do_tests(State, EqcOpts, _Tests) ->
         ok ->
             {ok, State}
     end.
+
+determine_output_fun(undefined, CmdLinePlain) ->
+  CmdLinePlain;
+determine_output_fun(false, _) ->
+  skip.
 
 coloured_output(".", []) ->
     cf:print("~!g*");
@@ -137,6 +144,28 @@ recheck_fun(AllProps) ->
         end
     end.
 
+execute_property_fun(EqcFun, skip, TestQuantity, AllProps) ->
+  fun({Module, Property}, Results) ->
+    cf:print("~n===== ~s:~s~n", [Module, Property]),
+    io:setopts([{encoding, unicode}]),
+    Result = eqc:counterexample(
+      eqc:EqcFun(TestQuantity, Module:Property())),
+    io:setopts([{encoding, latin1}]),
+    [{Property, Result} | Results];
+     (Property, Results) ->
+       case lists:keyfind(Property, 2, AllProps) of
+         {Module, Property} ->
+           io:setopts([{encoding, unicode}]),
+           Result = eqc:counterexample(
+             eqc:EqcFun(TestQuantity, Module:Property())),
+           io:setopts([{encoding, latin1}]),
+           [{Property, Result} | Results];
+         false ->
+           %% TODO: Add some error handling for when specified
+           %% properties are not found
+           [{Property, true} | Results]
+       end
+  end;
 execute_property_fun(EqcFun, Plain, TestQuantity, AllProps) ->
     OutputFun = case Plain of
                     true ->
@@ -591,7 +620,7 @@ reduce_path(Acc, ["."|Rest])       -> reduce_path(Acc, Rest);
 reduce_path([_|Acc], [".."|Rest])  -> reduce_path(Acc, Rest);
 reduce_path([], [".."|Rest])       -> reduce_path([], Rest);
 reduce_path(Acc, [Component|Rest]) -> reduce_path([Component|Acc], Rest).
-
+  
 -spec setup_name(rebar_state:t()) -> ok.
 setup_name(State) ->
     {Opts, _} = rebar_state:command_parsed_args(State),
